@@ -8,66 +8,99 @@ from flask_migrate import Migrate
 from project.logger import get_logger
 from project.middleware import setup_request_logging
 
-toolbar = DebugToolbarExtension()
-migrate = Migrate()
+# ───────────────────────────────────────────────────────────
+# GLOBAL EXTENSIONS
+# ───────────────────────────────────────────────────────────
+db = SQLAlchemy()
 bcrypt = Bcrypt()
-db = SQLAlchemy()  # Init db global, attach sau khi create_app
+migrate = Migrate()
+toolbar = DebugToolbarExtension()
 
 
 def create_app():
     app = Flask(__name__)
 
-    # enable CORS
-    CORS(app, resources={r"/*": {"origins": "*"}})
-
-    # Default config nếu env không set, tránh fai
+    # ───────────────────────────────────────────────────────
+    # LOAD CONFIG
+    # ───────────────────────────────────────────────────────
     app_settings = os.getenv("APP_SETTINGS", "project.config.DevelopmentConfig")
     app.config.from_object(app_settings)
 
-    # Setup logging
+    # ───────────────────────────────────────────────────────
+    # LOGGER
+    # ───────────────────────────────────────────────────────
     logger = get_logger("flask_app", app.config.get("LOG_LEVEL"))
-    logger.info(f"Starting application with config: {app_settings}")
-    logger.info(f"Starting application with Log Level: {app.config.get('LOG_LEVEL')}")
-    # Store logger in app context for easy access
+    logger.info(f"Starting app with config: {app_settings}")
     app.logger_instance = logger
 
-    # Attach db vào app ở đây, an toàn hơn
+    # ───────────────────────────────────────────────────────
+    # CORS
+    # ───────────────────────────────────────────────────────
+    # Các origin mặc định (local + prod)
+    default_origins = [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "https://develop.d2u6muixbujakf.amplifyapp.com",
+        "https://codeland.khanhjp.site",
+    ]
+
+    # Cho phép bổ sung origin qua env FRONTEND_ORIGINS (ngăn cách bằng dấu phẩy)
+    extra_origins = os.getenv("FRONTEND_ORIGINS", "")
+    if extra_origins:
+        default_origins.extend(
+            [o.strip() for o in extra_origins.split(",") if o.strip()]
+        )
+
+    CORS(
+        app,
+        resources={r"/api/*": {"origins": default_origins}},
+        supports_credentials=True,
+        allow_headers=["Content-Type", "Authorization"],
+        methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    )
+
+    # ───────────────────────────────────────────────────────
+    # INIT EXTENSIONS
+    # ───────────────────────────────────────────────────────
     db.init_app(app)
-    toolbar.init_app(app)
-    migrate.init_app(app, db)
     bcrypt.init_app(app)
+    migrate.init_app(app, db)
+    toolbar.init_app(app)
 
     logger.info("Database and extensions initialized")
 
-    # Register blueprint với prefix /users
-
-    # Users
-    from project.api.users import users_blueprint
-
-    app.register_blueprint(users_blueprint, url_prefix="/users")
-    logger.info("Users blueprint registered")
-
+    # ───────────────────────────────────────────────────────
+    # REGISTER BLUEPRINTS VỚI PREFIX /api
+    # ───────────────────────────────────────────────────────
     from project.api.auth import auth_blueprint
-
-    app.register_blueprint(auth_blueprint, url_prefix="/auth")
-    logger.info("Auth blueprint registered")
-
+    from project.api.users import users_blueprint
     from project.api.exercises import exercises_blueprint
-
-    app.register_blueprint(exercises_blueprint, url_prefix="/exercises")
-    logger.info("Exercises blueprint registered")
-
     from project.api.scores import scores_blueprint
 
-    app.register_blueprint(scores_blueprint, url_prefix="/scores")
-    logger.info("Scores blueprint registered")
+    app.register_blueprint(auth_blueprint, url_prefix="/api/auth")
+    logger.info("Auth blueprint registered at /api/auth")
 
-    # Setup request logging middleware
+    app.register_blueprint(users_blueprint, url_prefix="/api/users")
+    logger.info("Users blueprint registered at /api/users")
+
+    app.register_blueprint(exercises_blueprint, url_prefix="/api/exercises")
+    logger.info("Exercises blueprint registered at /api/exercises")
+
+    app.register_blueprint(scores_blueprint, url_prefix="/api/scores")
+    logger.info("Scores blueprint registered at /api/scores")
+
+    # ───────────────────────────────────────────────────────
+    # REQUEST LOGGING
+    # ───────────────────────────────────────────────────────
     setup_request_logging(app)
     logger.info("Request logging middleware setup completed")
 
-    # shell context for flask cli
-    app.shell_context_processor({"app": app, "db": db})
+    # ───────────────────────────────────────────────────────
+    # SHELL CONTEXT
+    # ───────────────────────────────────────────────────────
+    @app.shell_context_processor
+    def ctx():
+        return {"app": app, "db": db}
 
     logger.info("Application setup completed successfully")
     return app
